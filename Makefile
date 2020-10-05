@@ -12,10 +12,10 @@ MNIST_FILES= \
 	$(DATADIR)/t10k-images-idx3-ubyte \
 	$(DATADIR)/t10k-labels-idx1-ubyte
 
-all: test_bnn
+all: test_rnn
 
 clean:
-	-$(RM) ./bnn ./mnist *.o
+	-$(RM) ./bnn ./mnist ./rnn *.o
 
 test_bnn: ./bnn
 	./bnn
@@ -23,10 +23,16 @@ test_bnn: ./bnn
 test_mnist: ./mnist
 	./mnist $(MNIST_FILES)
 
+test_rnn: ./rnn
+	./rnn
+
 ./bnn: bnn.c
 	$(CC) -o $@ $^ $(LIBS)
 
 ./mnist: mnist.c cnn.c
+	$(CC) -o $@ $^ $(LIBS)
+
+./rnn: rnn.c
 	$(CC) -o $@ $^ $(LIBS)
 
 mnist.c: cnn.h
