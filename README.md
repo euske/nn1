@@ -34,6 +34,12 @@
  * Try changing the last layer from softmax to tanh.
  * Change the network configurations and see how the accuracy changes.
 
+## `rnn.c`
+
+ * Stateful + Simple SGD + Minibatch.
+ * Only one type of layer (Truncated BPTT).
+ * No gate.
+
 ## What I (re)discovered through this (re)implementation.
 
  * Use a proper learning rate.
@@ -42,3 +48,4 @@
  * Use Tanh/ReLU.
  * Choose the initial weight distribution wisely.
  * Feed the same data multiple times in a random order.
+ * Memorize past outputs/errors for RNN.
