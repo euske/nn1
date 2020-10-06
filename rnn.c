@@ -20,7 +20,7 @@ static int f(int i)
     return a[i % 8];
 }
 /* g: function to learn */
-static int g(int i)
+static double g(int i)
 {
     return ((i % 8) == 4)? 1 : 0;
 }
@@ -67,16 +67,17 @@ typedef struct _RNNLayer {
     int nnodes;                 /* Num. of Nodes */
     int ntimes;                 /* Num. of Times */
 
-    /* array layout: [ v[t=0], v[t=1], ..., v[t=ntimes-1] ] */
-    double* outputs;            /* Node Outputs (Hidden) */
+    /* array layout: [ v[t=0], v[t=-1], ..., v[t=-(ntimes-1)] ] */
+    double* outputs;            /* Node Outputs */
     double* errors;             /* Node Errors */
+    double* temp;               /* Node Hidden (temporary) */
 
-    int nxweights;               /* Num. of XWeights */
-    double* xweights;            /* XWeights (trained) */
-    double* u_xweights;          /* XWeight Updates */
-    int nhweights;               /* Num. of HWeights */
-    double* hweights;            /* HWeights (trained) */
-    double* u_hweights;          /* HWeight Updates */
+    int nxweights;              /* Num. of XWeights */
+    double* xweights;           /* XWeights (trained) */
+    double* u_xweights;         /* XWeight Updates */
+    int nhweights;              /* Num. of HWeights */
+    double* hweights;           /* HWeights (trained) */
+    double* u_hweights;         /* HWeight Updates */
 
     int nbiases;                /* Num. of Biases */
     double* biases;             /* Biases (trained) */
@@ -106,6 +107,7 @@ RNNLayer* RNNLayer_create(RNNLayer* lprev, int nnodes, int ntimes)
     int n = self->nnodes * self->ntimes;
     self->outputs = (double*)calloc(n, sizeof(double));
     self->errors = (double*)calloc(n, sizeof(double));
+    self->temp = (double*)calloc(self->nnodes, sizeof(double));
 
     if (lprev != NULL) {
         /* Fully connected */
@@ -140,6 +142,7 @@ void RNNLayer_destroy(RNNLayer* self)
 {
     assert (self != NULL);
 
+    free(self->temp);
     free(self->outputs);
     free(self->errors);
 
@@ -179,28 +182,27 @@ void RNNLayer_dump(const RNNLayer* self, FILE* fp)
     }
     fprintf(fp, ": nodes=%d\n", self->nnodes);
 
-    int k = 0;
-    for (int t = 0; t < self->ntimes; t++) {
-        fprintf(fp, "  outputs(%d) = [", k);
-        for (int i = 0; i < self->nnodes; i++) {
-            fprintf(fp, " %.4f", self->outputs[k++]);
-        }
-        fprintf(fp, "]\n");
-    }
-
     if (self->xweights != NULL) {
-        fprintf(fp, "  xweights = [");
-        for (int i = 0; i < self->nxweights; i++) {
-            fprintf(fp, " %.4f", self->xweights[i]);
+        int k = 0;
+        for (int i = 0; i < self->nnodes; i++) {
+            fprintf(fp, "  xweights(%d) = [", i);
+            for (int j = 0; j < lprev->nnodes; j++) {
+                fprintf(fp, " %.4f", self->xweights[k++]);
+            }
+            fprintf(fp, "]\n");
         }
-        fprintf(fp, "]\n");
+        assert (k == self->nxweights);
     }
     if (self->hweights != NULL) {
-        fprintf(fp, "  hweights = [");
-        for (int i = 0; i < self->nhweights; i++) {
-            fprintf(fp, " %.4f", self->hweights[i]);
+        int k = 0;
+        for (int i = 0; i < self->nnodes; i++) {
+            fprintf(fp, "  hweights(%d) = [", i);
+            for (int j = 0; j < self->nnodes; j++) {
+                fprintf(fp, " %.4f", self->hweights[k++]);
+            }
+            fprintf(fp, "]\n");
         }
-        fprintf(fp, "]\n");
+        assert (k == self->nhweights);
     }
 
     if (self->biases != NULL) {
@@ -210,9 +212,23 @@ void RNNLayer_dump(const RNNLayer* self, FILE* fp)
         }
         fprintf(fp, "]\n");
     }
+
+    {
+        int k = 0;
+        for (int t = 0; t < self->ntimes; t++) {
+            fprintf(fp, "  outputs(t=%d) = [", -t);
+            for (int i = 0; i < self->nnodes; i++) {
+                fprintf(fp, " %.4f", self->outputs[k++]);
+            }
+            fprintf(fp, "]\n");
+        }
+    }
+    fprintf(fp, "\n");
 }
 
-
+/* RNNLayer_reset(self)
+   Resets the hidden states.
+*/
 void RNNLayer_reset(RNNLayer* self)
 {
     assert (self != NULL);
@@ -237,10 +253,9 @@ static void RNNLayer_feedForw(RNNLayer* self)
         int isrc = self->nnodes * (t-1);
         for (int i = 0; i < self->nnodes; i++) {
             self->outputs[idst + i] = self->outputs[isrc + i];
-            self->errors[idst + i] = self->errors[isrc + i];
         }
     }
-    /* outputs[0..] and errors[0..] are now replaced by the new values. */
+    /* outputs[0..] will be replaced by the new values. */
 
     int kx = 0, kh = 0;
     for (int i = 0; i < self->nnodes; i++) {
@@ -252,14 +267,19 @@ static void RNNLayer_feedForw(RNNLayer* self)
         for (int j = 0; j < self->nnodes; j++) {
             h += (self->outputs[j] * self->hweights[kh++]);
         }
-        self->outputs[i] = tanh(h);
+        self->temp[i] = h;
+    }
+    assert (kx == self->nxweights);
+    assert (kh == self->nhweights);
+    for (int i = 0; i < self->nnodes; i++) {
+        self->outputs[i] = tanh(self->temp[i]);
     }
 
 #if DEBUG_LAYER
     fprintf(stderr, "RNNLayer_feedForw(Layer%d):\n", self->lid);
     fprintf(stderr, "  outputs = [");
     for (int i = 0; i < self->nnodes; i++) {
-        fprintf(stderr, " %.4f", self->outputs[i]);
+        fprintf(stderr, " %.4f (%.4f)", self->outputs[i], self->temp[i]);
     }
     fprintf(stderr, "]\n");
 #endif
@@ -280,28 +300,50 @@ static void RNNLayer_feedBack(RNNLayer* self)
         lprev->errors[j] = 0;
     }
 
-    int k = 0;
     for (int t = 0; t < self->ntimes; t++) {
         int kx = 0, kh = 0;
+        int i0 = t * self->nnodes;
+        int i1 = (t+1) * self->nnodes;
+        int j0 = t * lprev->nnodes;
         for (int i = 0; i < self->nnodes; i++) {
             /* Computer the weight/bias updates. */
-            double y = self->outputs[k];
+            double y = self->outputs[i0+i];
             double g = tanh_g(y);
-            double dnet = self->errors[k] * g;
-            for (int j = 0; j < lprev->nnodes; j++) {
-                /* Propagate the errors to the previous layer. */
-                lprev->errors[j] += self->xweights[kx] * dnet;
-                self->u_xweights[kx] += dnet * lprev->outputs[j];
-                kx++;
+            double dnet = self->errors[i0+i] * g;
+            if ((t+1) < lprev->ntimes) {
+                for (int j = 0; j < lprev->nnodes; j++) {
+                    /* Propagate the errors to the previous layer. */
+                    lprev->errors[j0+j] += self->xweights[kx] * dnet;
+                    self->u_xweights[kx] += dnet * lprev->outputs[j0+j];
+                    kx++;
+                }
             }
-            for (int j = 0; j < self->nnodes; j++) {
-                self->u_hweights[kh] += dnet * self->outputs[j];
-                kh++;
+            if ((t+1) < self->ntimes) {
+                for (int j = 0; j < self->nnodes; j++) {
+                    self->errors[i1+j] += self->hweights[kh] * dnet;
+                    self->u_hweights[kh] += dnet * self->outputs[i1+j];
+                    kh++;
+                }
             }
             self->u_biases[i] += dnet;
-            k++;
+        }
+        if ((t+1) < lprev->ntimes) {
+            assert (kx == self->nxweights);
+        }
+        if ((t+1) < self->ntimes) {
+            assert (kh == self->nhweights);
         }
     }
+
+    /* Save the previous values. */
+    for (int t = self->ntimes-1; 0 < t; t--) {
+        int idst = self->nnodes * t;
+        int isrc = self->nnodes * (t-1);
+        for (int i = 0; i < self->nnodes; i++) {
+            self->errors[idst + i] = self->errors[isrc + i];
+        }
+    }
+    /* errors[0..] will be replaced by the new values. */
 
 #if DEBUG_LAYER
     fprintf(stderr, "RNNLayer_feedBack(Layer%d):\n", self->lid);
@@ -329,14 +371,25 @@ void RNNLayer_setInputs(RNNLayer* self, const double* values)
     assert (self->lprev == NULL);
 
 #if DEBUG_LAYER
-    fprintf(stderr, "RNNLayer_setInputs(Layer%d): values = [", self->lid);
+    fprintf(stderr, "RNNLayer_setInputs(Layer%d):\n", self->lid);
+    fprintf(stderr, "  values = [");
     for (int i = 0; i < self->nnodes; i++) {
         fprintf(stderr, " %.4f", values[i]);
     }
     fprintf(stderr, "]\n");
 #endif
 
-    /* Set the values as the outputs. */
+    /* Save the previous values. */
+    for (int t = self->ntimes-1; 0 < t; t--) {
+        int idst = self->nnodes * t;
+        int isrc = self->nnodes * (t-1);
+        for (int i = 0; i < self->nnodes; i++) {
+            self->outputs[idst + i] = self->outputs[isrc + i];
+        }
+    }
+    /* outputs[0..] will be replaced by the new values. */
+
+    /* Set the input values as the outputs. */
     for (int i = 0; i < self->nnodes; i++) {
         self->outputs[i] = values[i];
     }
@@ -386,7 +439,12 @@ void RNNLayer_learnOutputs(RNNLayer* self, const double* values)
     }
 
 #if DEBUG_LAYER
-    fprintf(stderr, "RNNLayer_learnOutputs(Layer%d): errors = [", self->lid);
+    fprintf(stderr, "RNNLayer_learnOutputs(Layer%d):\n", self->lid);
+    fprintf(stderr, "  values = [");
+    for (int i = 0; i < self->nnodes; i++) {
+        fprintf(stderr, " %.4f", values[i]);
+    }
+    fprintf(stderr, "]\n  errors = [");
     for (int i = 0; i < self->nnodes; i++) {
         fprintf(stderr, " %.4f", self->errors[i]);
     }
@@ -394,7 +452,7 @@ void RNNLayer_learnOutputs(RNNLayer* self, const double* values)
 #endif
 
     /* Start backpropagation. */
-    RNNLayer* layer = self->lprev;
+    RNNLayer* layer = self;
     while (layer != NULL) {
         RNNLayer_feedBack(layer);
         layer = layer->lprev;
@@ -453,27 +511,30 @@ int main(int argc, char* argv[])
     RNNLayer_dump(loutput, stderr);
 
     /* Run the network. */
-    double rate = 1.0;
-    int nepochs = 1000;
-    for (int i = 0; i < nepochs; i++) {
+    double rate = 0.005;
+    int nepochs = 100;
+    for (int n = 0; n < nepochs; n++) {
+        int i = rand() % 10000;
         double x[10];
         double y[1];
-        double t[1];
+        double r[1];
         RNNLayer_reset(linput);
         RNNLayer_reset(lhidden);
         RNNLayer_reset(loutput);
-        for (int j = 0; j < ntimes; j++) {
-            int p = f(i+j);
+        fprintf(stderr, "reset: i=%d\n", i);
+        for (int j = 0; j < 100; j++) {
+            int p = f(i);
             for (int k = 0; k < 10; k++) {
                 x[k] = (k == p)? 1 : 0;
             }
-            t[0] = g(i+j);   /* answer */
+            r[0] = g(i);   /* answer */
             RNNLayer_setInputs(linput, x);
             RNNLayer_getOutputs(loutput, y);
-            RNNLayer_learnOutputs(loutput, t);
+            RNNLayer_learnOutputs(loutput, r);
             double etotal = RNNLayer_getErrorTotal(loutput);
-            fprintf(stderr, "i=%d, x=%d, y=[%.4f], t=[%.4f], etotal=%.4f\n",
-                    i, p, y[0], t[0], etotal);
+            fprintf(stderr, "x[%d]=%d, y=%.4f, r=%.4f, etotal=%.4f\n",
+                    i, p, y[0], r[0], etotal);
+            i++;
         }
         RNNLayer_update(loutput, rate);
     }
@@ -482,6 +543,21 @@ int main(int argc, char* argv[])
     RNNLayer_dump(linput, stdout);
     RNNLayer_dump(lhidden, stdout);
     RNNLayer_dump(loutput, stdout);
+
+    RNNLayer_reset(linput);
+    RNNLayer_reset(lhidden);
+    RNNLayer_reset(loutput);
+    for (int i = 0; i < 20; i++) {
+        double x[10];
+        double y[1];
+        int p = f(i);
+        for (int k = 0; k < 10; k++) {
+            x[k] = (k == p)? 1 : 0;
+        }
+        RNNLayer_setInputs(linput, x);
+        RNNLayer_getOutputs(loutput, y);
+        fprintf(stderr, "x[%d]=%d, y=%.4f, %.4f\n", i, p, y[0], g(i));
+    }
 
     RNNLayer_destroy(linput);
     RNNLayer_destroy(lhidden);
