@@ -49,3 +49,14 @@
  * Choose the initial weight distribution wisely.
  * Feed the same data multiple times in a random order.
  * Memorize past outputs/errors for RNN.
+
+### What I further learned...
+
+In addition to the usual ML tips (more data is better,
+balanced data is better, data prep. matters, etc.),
+I learned the following when you design your own NN model:
+
+ * Encoding/decoding matters.
+ * Loss function is super important. It can make or break the whole project.
+ * Learning rate / scheduler is also important.
+   (But today it's getting easier with Adam, etc.)
