@@ -60,3 +60,4 @@ I learned the following when you design your own NN model:
  * Loss function is super important. It can make or break the whole project.
  * Learning rate / scheduler is also important.
    (But today it's getting easier with Adam, etc.)
+ * Do not mix different activation functions at the output layer.
